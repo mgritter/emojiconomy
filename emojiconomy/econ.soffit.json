@@ -1,0 +1,25 @@
+{
+    "version" : "0.1",
+    "start" : "S[source]; K[sink]",
+    
+    "S[source]; A[allowed_plant]" :
+    "S[source]; P[unused_plant]; S->P",
+    
+    "P[unused_plant]; A[allowed_plant_proc]" :
+    "P[plant]; PP[plant_proc]; P->PP",
+    
+    "P[unused_plant]; A1[allowed_plant_proc]; A2[allowed_plant_prod]" :
+    "P[plant]; P1[plant_proc]; P2[plant_prod]; P->P1; P->P2",
+
+    "P[unused_plant]; A1[allowed_plant_prod]; A2[allowed_plant_prod]" :
+    "P[plant]; P1[plant_prod]; P2[plant_prod]; P->P1; P->P2",
+
+    "P[unused_plant]; K[sink]" :
+    "P[plant]; K[sink]; P->K",
+    
+    "P[plant_proc]; K[sink]" :
+    "P[plant_proc]; K[sink]; P->K",
+
+    "P[plant]; PP[plant_proc]; A[allowed_food]; K[sink]" :
+    "P[plant]; PP[plant_proc]; F[food]; K[sink]; P->F; PP->F; F->K"
+}
