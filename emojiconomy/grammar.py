@@ -3,7 +3,7 @@ from soffit.display import drawSvg
 import os
 
 from emojiconomy.emoji import emojify_graph
-from emojiconomy.flow import annotate_source_edges, flow_to_consumables
+from emojiconomy.flow import flow_to_consumables
 
 #import networkx as nx
 
@@ -87,11 +87,15 @@ def run_econ( default_maximum = 10, maximums = {} ):
     describe_econ( a.graph )
     
     drawSvg( a.graph, "econ.svg" )
-
-    g2 = a.graph.copy()
-    annotate_source_edges( g2 )
-    flow_to_consumables( g2, None )
     
+    g2 = a.graph.copy()
+    g3 = flow_to_consumables( g2, None )
+    for e in g3.edges:
+        g3.edges[e]['tag'] = str( int( 1000 * g3.edges[e]['flow'] ) )
+
+    drawSvg( g3, "econ-flow.svg" )
+
+        
 
 if __name__ == "__main__":
     run_econ(3)
