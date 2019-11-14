@@ -140,6 +140,7 @@ class FlowModel(object):
         g = self.graph.copy()
         for n in g.nodes:
             g.nodes[n]['quantity'] = 0
+            g.nodes[n]['slack'] = 0
 
         for i,j in g.edges:
             g[i][j]['flow'] = 0
@@ -202,14 +203,17 @@ class FlowModel(object):
                 else:
                     # Interpret as item counts, if feasible
                     total = sum( w for i,j,w in outputs )
-                    if total < available:
+                    if total <= available:
                         for (i,j,w) in outputs:
                             g.edges[(i,j)]['flow'] = w
+                        g.nodes[n]['slack'] = available - total
                     else:
                         # Infeasible, scale down
                         for (i,j,w) in outputs:
                             rounded_flow = available * w // total
+                            available -= rounded_flow
                             g.edges[(i,j)]['flow'] = rounded_flow
+                        g.nodes[n]['slack'] = available 
                             
         c = amount_consumed( g )
         return g, c, self.metric( c )
@@ -257,8 +261,11 @@ def largest_step( x, g ):
 debug_gradient = True
 debug_step = True
 
+def flatten( list_of_lists ):
+    return [item for sublist in list_of_lists for item in sublist]
+
 def pairwise_sum( x, delta ):
-    return [ round(x_i + delta_i) for x_i, delta_i in zip( x, delta ) ]
+    return [ x_i + delta_i for x_i, delta_i in zip( x, delta ) ]
 
 def step_indicator( x, y ):
     ret = ""
@@ -276,23 +283,51 @@ def in_range( x ):
 
 def all_zeros( x ):
     return not max( x_i > 0.0 for x_i in x )
-    
+
+def nonnegative( x ):
+    return min( x_i >= 0 for x_i in x )
+
+def simplex_increase( simplex_size ):
+    for i in range( simplex_size ):
+        delta = [0] * simplex_size
+        delta[i] = 1
+        yield delta
+        
+def simplex_stable( simplex_size ):
+    yield [0] * simplex_size
+    for i, j in itertools.combinations( range( simplex_size ), r = 2 ):
+        delta = [0] * simplex_size
+        delta[i] = 1
+        delta[j] = -1
+        yield delta
+            
 def step_solver( f, x ):
-    x = f.recenter_simplex( x )
     flow, consumption, y = f.compute_flow( x )
-    step = 0.01
-    
     print( "Start:", y, x )
 
     visited = set()
     visited.add( tuple(x) )
     
     while True:
-        allSteps = itertools.product( [-step, 0.0, step], repeat=len( x ) )
-        next_xs = [ pairwise_sum( x, d ) for d in allSteps ]
+        # If there is slack in the simplex, only look at increases
+        # otherwise, only permit balanced operations.
+        simplexSteps = []
+        
+        for simplex, outputs in f.simplex_iter( x ):
+            sourceNode = simplex[0][0]
+            available = flow.nodes[sourceNode]['quantity']
+            if sum( outputs ) < available:
+                simplexSteps.append( list(
+                    simplex_increase( len( simplex ) ) ) )
+            else:
+                simplexSteps.append( list(
+                    simplex_stable( len( simplex ) ) ) )
+                                     
+        allSteps = itertools.product( *simplexSteps )
+        next_xs = [ pairwise_sum( x, flatten(d) ) for d in allSteps ]
         
         neighborhood = [ (x_p, f.compute_flow( x_p )) for x_p in next_xs
-                         if f.in_range( x_p ) and not tuple(x_p) in visited ]
+                         if not tuple(x_p) in visited ]
 
         if debug_step:
             print( len( neighborhood ), "neighbors" )
@@ -317,6 +352,157 @@ def step_solver( f, x ):
             
     return flow, consumption, y, x       
 
+# FIXME: memoize me!
+def augmenting_paths( flow, good, amount, memo ):
+    key = ( good, amount )
+    if key in memo:
+        return memo[key]
+    
+    # We always have two options:
+    # Pay for the change locally by taking away from a different consumer
+    # Or, propogate the change upward.
+    # FIXME: or a combination of the two?
+    
+    # If enough to satisfy already, don't need to propogate changes
+    amount -= flow.nodes[good]['slack']
+    if amount <= 0:
+        return [[]]
+
+    choices = [[]]
+
+    if flow.nodes[good]['category'] == 'factory':
+        # Augment all inputs, by 1/2 the amount
+        inputs = []
+        for i,j,e in flow.in_edges( [good], data=True ):
+            needed = (amount+1) // 2
+            inputs.append( [a + [(i,j,needed)]
+                            for a in augmenting_paths( flow, i, needed, memo ) ] )
+        assert len( inputs ) == 2
+        # Combination of all ways to increase input A, with all
+        # ways to simultanously increase input B.
+        for a in inputs[0]:
+            for b in inputs[1]:
+                choices.append( a + b )
+    elif flow.nodes[good]['category'] == 'process':
+        # Augment input by 2x the amount
+        inputs = []
+        for i,j,e in flow.in_edges( [good], data=True ):
+            needed = amount * 2
+            inputs.append( [ a + [(i,j,needed)]
+                             for a in augmenting_paths( flow, i, needed, memo ) ] )
+        assert len( inputs ) == 1
+        choices.extend( inputs[0] )
+    elif flow.nodes[good]['category'] == 'source':
+        pass
+    else:
+        # Augment any input by 1x
+        for i,j,e in flow.in_edges( [good], data=True ):
+            for input_augmented in augmenting_paths( flow, i, amount, memo ):
+                choices.append( input_augmented + [(i,j,amount)] )
+
+    # print( "Augment", good, "by", amount, "choices", choices )
+
+    memo[key] = choices
+    return choices
+
+def possible_decreases( simplex, needed ):
+    if len( simplex ) == 0:
+        if needed == 0:
+            yield []
+        return
+        
+    if simplex[0] > 0:
+        for d in possible_decreases( simplex[1:], needed ):
+            yield [0] + d
+    else:
+        # We can increase at this position
+        for i in range( needed + 1 ):
+            for d in possible_decreases( simplex[1:], needed - i ):
+                yield [-i] + d            
+               
+def augmenting_path_solver( f , x ):
+    flow, consumption, y = f.compute_flow( x )
+    print( "Start:", y, x )
+
+    while True:
+        # Attempt to increase consumption of a good by 1.
+        # FIXME: use 2?
+        paths = []
+        sinks = [ n for n,t in flow.nodes.data( 'tag' ) if t == 'sink']
+        memo = {}
+        for i,j,e in flow.in_edges( sinks, data=True ):
+            for p in augmenting_paths( flow, i, 1, memo ):
+                p.append( (i,j,1) )
+                paths.append( p )
+
+        # Not every augmenting path leads to a different set of parameters,
+        # deduplicate them in this dictionary (which stores one of the paths).
+        neighbors = {}
+        
+        for p in paths:
+            # there's more than one way to do it!  Keep a list, which
+            # we'll build up in parallel, simplex by simplex
+            x_for_path = [[]]
+            
+            # print( "Path", p )
+            for simplex, x_s in f.simplex_iter( x ):
+                source = simplex[0][0]
+                
+                # desired increases within this simplex
+                increases = [
+                    sum( a for (i,j,a) in p if (i,j) == e )
+                    for e in simplex
+                ]
+                decrease_needed = \
+                    sum( increases ) - flow.nodes[source]['slack']
+                #print( "Simplex", simplex, "Desired increase: ", increases,
+                #       "Decrease needed:", decrease_needed )
+                if decrease_needed <= 0:
+                    x_for_path = [
+                        prev_x + list( z + inc
+                                       for z, inc in zip( x_s, increases ) )
+                        for prev_x in x_for_path
+                    ]
+                else:
+                    # Extend every partial x with new coefficients
+                    # that have the desired increases
+                    # and every possible set of decreases
+                    x_for_path = [
+                        prev_x + list( z + inc + dec
+                                       for z, inc, dec in zip( x_s, increases, decreases ) )
+                        for decreases in possible_decreases( increases, decrease_needed )
+                        for prev_x in x_for_path
+                    ]
+
+            for x_p in x_for_path:
+                if x_p != x and nonnegative( x_p ):
+                    neighbors[tuple(x_p)] = p
+        
+        neighborhood = [ (x_p, f.compute_flow( x_p ),p)
+                         for (x_p,p) in neighbors.items() ]
+
+        print( "num neighbors:", len( neighborhood ) )
+        x_p, (f_p, c_p, y_p), best_path = \
+            max( neighborhood, key = lambda t : t[1][2] )
+        print( "Best:", y_p, x_p ) 
+        print( "Best path: ", best_path ) 
+
+        if y_p <= y:
+            for n in neighborhood:
+                print( "X=",n[0], "Y=", n[1][2], "P=", n[2] )
+                # print( n[1][1] )
+            break
+        else:
+            flow = f_p
+            consumption = c_p
+            y = y_p
+            x = x_p
+                
+    return flow, consumption, y, x
+        
+
+    
+    
 def show_vector( v ):
     return "[" + ", ".join( "{:0.2f}".format( x ) for x in v ) + "]"
 
@@ -346,10 +532,21 @@ def gradient_solver( f, x ):
             print( "y=", "{:0.5f}".format( y_p ),
                    "at", show_vector( x_p ) )
 
-        # If improvement is negative, or too small, decrease step size
-        grad_squared = sum( x_i ** 2 for x_i in grad )
+        # The "backtracking" algorithm compares real improvement with the
+        # estimate step/2 * ||grad||^2.
+        # If improvement is negative, or too small, decrease step size.
+        #
+        # But, because we project back into the allowed region, the effective
+        # move we took could be much smaller.  Let's calculate what
+        # the gradient "would have been" based on the move we actually made,
+        # and use that lower value as our expected improvement.
+        effective_grad = [ ( x1 - x2 ) / step for x1, x2 in zip( x_p, x ) ]
+        if debug_gradient:
+            print( "Eff grad:    ", show_vector( effective_grad ) )
+        grad_squared = sum( x_i ** 2 for x_i in effective_grad )
         bound = (step / 2) * grad_squared
         print( "Improvement=", y_p - y, "bound=", bound )
+        
         if y_p - y < bound:
             step *= beta
             print( "Reducing step to", step )
@@ -389,8 +586,6 @@ def flow_to_consumables( g, metric ):
     x_init = f.relaxed_start()
     flow, consumption, utility, x = gradient_solver( f, x_init )
 
-    # flow, consumption, utility, x = step_solver( f, x )
-    
     print( "Gradient maximum:", x )
     print( "Utility =", utility )
     if False:
@@ -411,7 +606,16 @@ def flow_to_consumables( g, metric ):
         print( n, attr['text'], attr['quantity'] )
     for n,v in consumption.items():
         print( n, v )
+
+    flow, consumption, utility, x_final = augmenting_path_solver( f, x_exact )
+    print( "Optimized:", x_final )
+    print( "Final utility =", utility )
+    for (n,attr) in flow.nodes( data=True ):
+        print( n, attr['text'], attr['quantity'] )
+    for n,v in consumption.items():
+        print( n, v )
     
+
     return flow
 
 
