@@ -76,27 +76,17 @@ def run_econ( default_maximum = 10, maximums = {} ):
             nodeNumber += 1
                             
     a = soffit.ApplicationState(
-        initialGraph = init_graph,
+        initialGraph = init_graph,        
         grammar = econ_grammar
     )
-
+    a.verbose = False
     a.run( 20 )
     remove_unused( a.graph )
     emojify_graph( a.graph )
-
-    describe_econ( a.graph )
-    
-    drawSvg( a.graph, "econ.svg" )
-    
-    g2 = a.graph.copy()
-    g3, utility = flow_to_consumables( g2, None )
-    for e in g3.edges:
-        g3.edges[e]['tag'] = str( int( g3.edges[e]['flow'] ) )
-
-    drawSvg( g3, "econ-flow.svg" )
-
+    return a.graph
         
-
 if __name__ == "__main__":
-    run_econ(3)
+    g = run_econ(3)
+    describe_econ( g )
+    drawSvg( g, "econ.svg" )
     

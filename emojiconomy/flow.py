@@ -581,11 +581,13 @@ def gradient_solver( f, x, debug_gradient = False ):
             print( "Eff grad:    ", show_vector( effective_grad ) )
         grad_squared = sum( x_i ** 2 for x_i in effective_grad )
         bound = (step / 2) * grad_squared
-        print( "Improvement=", y_p - y, "bound=", bound )
+        if debug_gradient:
+            print( "Improvement=", y_p - y, "bound=", bound )
         
         if y_p - y < bound:
             step *= beta
-            print( "Reducing step to", step )
+            if debug_gradient:
+                print( "Reducing step to", step )
             if step < 0.000001:
                 break
 
@@ -633,7 +635,8 @@ def add_tax( g ):
         edges.append(  ( n, "TAX") )
     return edges
 
-def flow_to_consumables( g, metric,
+def flow_to_consumables( g,
+                         metric = None,
                          all_initial_goods = 1000,
                          fixed_flows = [],
                          verbose = True ):
