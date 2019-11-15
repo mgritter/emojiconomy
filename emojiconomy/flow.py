@@ -62,10 +62,27 @@ class FlowModel(object):
             self.metric = metric
         self.initial_goods = []
         self.simplices = []
-
-        self.equal_output = set()
-        self.max_output = set()
-
+        self.fixed_flows = {}
+        
+    def set_fixed_flow( self, src, dst, flow ):
+        # Remove the given edge as a parameter.
+        for i,s in enumerate( self.simplices ):
+            if (src,dst) in s:
+                s.remove( (src,dst) )
+                if len( s ) <= 1:
+                    del self.simplices[i]
+                self.num_parameters = sum( len( s ) for s in self.simplices )
+                break
+            
+        self.fixed_flows[ (src,dst) ] = flow
+        
+    def set_initial_goods( self, amount = 1000 ):
+        sources = [ n for n,t in self.graph.nodes.data( 'tag' )
+                    if t == 'source']
+        for n in self.initial_goods:
+            for s in sources:
+                self.set_fixed_flow( s, n, amount )
+        
     def find_parameters( self ):
         # At choice points we must assign inputs to outputs.
         # input >= out_1 + out_2 + ... + out_k
@@ -80,9 +97,9 @@ class FlowModel(object):
                 for i,j in self.graph.out_edges( n ):
                     self.initial_goods.append( j )
             elif self.graph.nodes[n]['category'] == 'factory':
-                self.equal_output.add( n )
+                pass
             elif self.graph.nodes[n]['category'] == 'process':
-                self.max_output.add( n )                
+                pass
             elif self.graph.out_degree(n) > 1:
                 simplex = list( self.graph.out_edges(n) )
                 self.simplices.append( simplex )
@@ -104,24 +121,6 @@ class FlowModel(object):
             p.extend( [x] * ( len( s ) ) )
         return p
 
-    # FIXME
-    def in_range( self, x ):
-        if len( x ) == 0:
-            return True
-        if max( x_i <= 0 or x_i >= 1.0 for x_i in x ):
-            return False
-
-        pos = 0
-        for simplex in self.simplices:    
-            p_size = len( simplex ) - 1
-            p = x[pos:pos+p_size]
-            pos += p_size
-
-            if sum( p ) > 1.0:
-                return False
-            
-        return True
-        
     def project_onto_simplices( self, x_0 ):
         """Project a relaxed solution onto its nearest L2-norm neighbor
         that obeys the simplex constraints.
@@ -131,19 +130,71 @@ class FlowModel(object):
             z.extend( project_onto_standard_simplex( x ) )
             
         return z
-                        
-    def compute_flow( self, parameters, initial_production = None,
-                      relaxed = False ):
-        if initial_production is None:
-            initial_production = [1000 for _ in self.initial_goods ]
 
+    def handle_branch_node( self,
+                            g,
+                            n,
+                            relaxed ):
+        g.nodes[n]['quantity'] += \
+            sum( f for i, j, f in g.in_edges(n,data='flow') )
+        available = g.nodes[n]['quantity']
+
+        min_flow = g.out_edges(n,data="min_flow")
+        min_flow_required = sum( f for i,j,f in min_flow )
+        # Might go negative.
+        available -= min_flow_required
+        if available < 0:
+            g.graph['negative_flows'] = True
+            
+        outputs = g.out_edges(n,data=True)
+        if relaxed:                    
+            # Interpret as 0--1 simplex
+            for (i,j,attr) in outputs:
+                w = attr['weight']
+                if attr['min_flow'] == 0:
+                    g.edges[(i,j)]['flow'] = available * w
+        elif len( outputs ) == 1:
+            for (i,j,attr) in outputs:
+                if attr['min_flow'] == 0:
+                    g.edges[(i,j)]['flow'] = available
+            g.nodes[n]['slack'] = 0
+        else:      
+            # Interpret as item counts, if feasible
+            # min_flow already removed from available
+            committed = sum( attr['weight'] for i,j,attr in outputs )
+            total = committed - min_flow_required
+            # print( "available", available, "total output", total )
+            if total <= available:
+                for (i,j,attr) in outputs:
+                    if attr['min_flow'] == 0:
+                        g.edges[(i,j)]['flow'] = attr['weight']
+                        # print( (i,j), "flow", attr['weight'] )
+                g.nodes[n]['slack'] = available - total
+            else:
+                # Infeasible, scale down
+                for (i,j,attr) in outputs:
+                    if attr['min_flow'] == 0:
+                        rounded_flow = available * attr['weight'] // total
+                        available -= rounded_flow
+                        g.edges[(i,j)]['flow'] = rounded_flow
+                        # print( (i,j), "rounded flow", rounded_flow )
+                g.nodes[n]['slack'] = available
+        
+    def compute_flow( self,
+                      parameters,
+                      relaxed = False ):
         g = self.graph.copy()
+        
+        # Does graph contain any negative flows?
+        g.graph['negative_flows'] = False
+
         for n in g.nodes:
             g.nodes[n]['quantity'] = 0
             g.nodes[n]['slack'] = 0
 
         for i,j in g.edges:
             g[i][j]['flow'] = 0
+            g[i][j]['min_flow'] = 0
             if relaxed:
                 g[i][j]['weight'] = 1.0
             else:
@@ -155,15 +206,18 @@ class FlowModel(object):
             for e,weight in zip( simplex, x ):
                 g.edges[e]['weight'] = weight
 
-        for i,n in enumerate( self.initial_goods ):
-            g.nodes[n]['quantity'] = initial_production[i]
-
-        # FIXME: draw flows from source
-        
+        for edge,amount in self.fixed_flows.items():
+            g.edges[edge]['flow'] = amount
+            g.edges[edge]['min_flow'] = amount
+            g.edges[edge]['weight'] = amount
+                
         for n in topological_sort( g ):
+            if self.graph.nodes[n]['tag'] == 'source':
+                # Show flows as if they came from source.
+                continue
             # If node is a multi-output processing plant, its outgoing
             # edges are tagged '=' and the input should be divided equally.
-            if self.graph.nodes[n]['category'] == 'process':
+            elif self.graph.nodes[n]['category'] == 'process':
                 g.nodes[n]['quantity'] += \
                     sum( f for i,j,f in g.in_edges(n,data='flow') )
                 outputs = g.out_edges( n )
@@ -192,28 +246,7 @@ class FlowModel(object):
             # Otherwise, we have a choice and apply the weights from the
             # parameters, or no choice and send the entire output.
             else:
-                g.nodes[n]['quantity'] += \
-                    sum( f for i, j, f in g.in_edges(n,data='flow') )
-                available = g.nodes[n]['quantity'] 
-                outputs = g.out_edges(n,data='weight')
-                if relaxed:
-                    # Interpret as 0--1 simplex
-                    for (i,j,w) in outputs:
-                        g.edges[(i,j)]['flow'] = available * w
-                else:
-                    # Interpret as item counts, if feasible
-                    total = sum( w for i,j,w in outputs )
-                    if total <= available:
-                        for (i,j,w) in outputs:
-                            g.edges[(i,j)]['flow'] = w
-                        g.nodes[n]['slack'] = available - total
-                    else:
-                        # Infeasible, scale down
-                        for (i,j,w) in outputs:
-                            rounded_flow = available * w // total
-                            available -= rounded_flow
-                            g.edges[(i,j)]['flow'] = rounded_flow
-                        g.nodes[n]['slack'] = available 
+                self.handle_branch_node( g, n, relaxed )
                             
         c = amount_consumed( g )
         return g, c, self.metric( c )
@@ -231,9 +264,8 @@ class FlowModel(object):
             grad[i] = ( m_prime - m ) / delta
         return grad
     
-    def unrelaxed_weights( self, x, initial_production = None ):
+    def unrelaxed_weights( self, x ):
         flows, _, m = self.compute_flow( x,
-                                         initial_production=initial_production,
                                          relaxed=True )
         x_int = []
         for simplex, _ in self.simplex_iter( x ):
@@ -257,9 +289,6 @@ def largest_step( x, g ):
         # -x <= step * g
         # step <= -x / g
         return -x / g
-
-debug_gradient = True
-debug_step = True
 
 def flatten( list_of_lists ):
     return [item for sublist in list_of_lists for item in sublist]
@@ -335,7 +364,7 @@ def step_solver( f, x ):
 
         if len( neighborhood ) == 0:
             break
-        
+
         x_p, (f_p, c_p, y_p) = max( neighborhood, key = lambda t : t[1][2] )
         if debug_step:
             print( "Best: ", y_p, x_p ) 
@@ -352,7 +381,6 @@ def step_solver( f, x ):
             
     return flow, consumption, y, x       
 
-# FIXME: memoize me!
 def augmenting_paths( flow, good, amount, memo ):
     key = ( good, amount )
     if key in memo:
@@ -420,9 +448,10 @@ def possible_decreases( simplex, needed ):
             for d in possible_decreases( simplex[1:], needed - i ):
                 yield [-i] + d            
                
-def augmenting_path_solver( f , x ):
+def augmenting_path_solver( f , x, verbose = False ):
     flow, consumption, y = f.compute_flow( x )
-    print( "Start:", y, x )
+    if verbose:
+        print( "Start:", y, x )
 
     while True:
         # Attempt to increase consumption of a good by 1.
@@ -481,16 +510,23 @@ def augmenting_path_solver( f , x ):
         neighborhood = [ (x_p, f.compute_flow( x_p ),p)
                          for (x_p,p) in neighbors.items() ]
 
-        print( "num neighbors:", len( neighborhood ) )
+        if verbose:
+            print( "num neighbors:", len( neighborhood ) )
+
+        if len( neighborhood ) == 0:
+            break
+
         x_p, (f_p, c_p, y_p), best_path = \
             max( neighborhood, key = lambda t : t[1][2] )
-        print( "Best:", y_p, x_p ) 
-        print( "Best path: ", best_path ) 
+        if verbose:
+            print( "Best:", y_p, x_p ) 
+            print( "Best path: ", best_path ) 
 
         if y_p <= y:
-            for n in neighborhood:
-                print( "X=",n[0], "Y=", n[1][2], "P=", n[2] )
-                # print( n[1][1] )
+            if verbose:
+                for n in neighborhood:
+                    print( "X=",n[0], "Y=", n[1][2], "P=", n[2] )
+                    # print( n[1][1] )
             break
         else:
             flow = f_p
@@ -507,7 +543,7 @@ def show_vector( v ):
     return "[" + ", ".join( "{:0.2f}".format( x ) for x in v ) + "]"
 
 
-def gradient_solver( f, x ):
+def gradient_solver( f, x, debug_gradient = False ):
     flow, consumption, y = f.compute_flow( x, relaxed=True )
     beta = 0.4
     step = 0.1
@@ -550,7 +586,7 @@ def gradient_solver( f, x ):
         if y_p - y < bound:
             step *= beta
             print( "Reducing step to", step )
-            if step < 0.00001:
+            if step < 0.000001:
                 break
 
         if y_p > y:
@@ -562,61 +598,88 @@ def gradient_solver( f, x ):
     return flow, consumption, y, x
 
 def add_imports( g ):
-    g = g.copy()
-    g.add_node( "T", tag="import", category="trade", text="import" )
+    g.add_node( "IMP", tag="import", category="trade", text="import" )
     for n, t in g.nodes.data('category'):
-        if t == 'unassigned':
+        if t == 'source':
+            continue
+        if t == 'sink':
+            continue
+        if t == 'trade':
             continue
         if t == 'process':
             continue
         if t == 'factory':
             continue
-        if n == "T":
-            continue
-        g.add_edge( "T", n )
+        g.add_edge( "IMP", n )
 
-    assert g.in_degree( "T" ) == 0
+    assert g.in_degree( "IMP" ) == 0
     return g
-    
-def flow_to_consumables( g, metric ):
+
+def add_tax( g ):
+    edges = []
+    g.add_node( "TAX", tag="tax", category="trade", text="tax" )
+    for n, t in g.nodes.data('category'):
+        if t == 'source':
+            continue
+        if t == 'sink':
+            continue
+        if t == 'trade':
+            continue
+        if t == 'process':
+            continue
+        if t == 'factory':
+            continue
+        g.add_edge( n, "TAX" )
+        edges.append(  ( n, "TAX") )
+    return edges
+
+def flow_to_consumables( g, metric,
+                         all_initial_goods = 1000,
+                         fixed_flows = [],
+                         verbose = True ):
     f = FlowModel( g, metric )
     f.find_parameters()
-    print( f.simplices )
-    
+    if all_initial_goods > 0:
+        f.set_initial_goods( all_initial_goods )
+        
+    for (i,j),f in fixed_flows:
+        f.set_fixed_flow( i, j, f )
+    if verbose:
+        print( "Simplices:" )
+        for s in f.simplices:
+            print( "  ", s )
+
     x_init = f.relaxed_start()
     flow, consumption, utility, x = gradient_solver( f, x_init )
 
-    print( "Gradient maximum:", x )
-    print( "Utility =", utility )
-    if False:
+    if verbose:
+        print( "Gradient maximum:", x )
+        print( "Utility =", utility )
+        
+    x_exact = f.unrelaxed_weights( x )
+
+    if verbose:
+        print( "Unrelaxed:", x_exact )
+    flow, consumption, utility = f.compute_flow( x_exact, relaxed = False )
+
+    if verbose:
+        print( "Unrelaxed utility =", utility )
         for (n,attr) in flow.nodes( data=True ):
             print( n, attr['text'], attr['quantity'] )
-    if False:
-        for (i,j,attr) in flow.edges( data=True ):
-            print( i, j, attr['flow'] )
-    if False:
         for n,v in consumption.items():
             print( n, v )
 
-    x_exact = f.unrelaxed_weights( x )
-    print( "Unrelaxed:", x_exact )
-    flow, consumption, utility = f.compute_flow( x_exact, relaxed = False )
-    print( "Unrelaxed utility =", utility )
-    for (n,attr) in flow.nodes( data=True ):
-        print( n, attr['text'], attr['quantity'] )
-    for n,v in consumption.items():
-        print( n, v )
-
     flow, consumption, utility, x_final = augmenting_path_solver( f, x_exact )
-    print( "Optimized:", x_final )
-    print( "Final utility =", utility )
-    for (n,attr) in flow.nodes( data=True ):
-        print( n, attr['text'], attr['quantity'] )
-    for n,v in consumption.items():
-        print( n, v )
-    
 
-    return flow
+    if verbose:
+        print( "Optimized:", x_final )
+        print( "Final utility =", utility )
+        for (n,attr) in flow.nodes( data=True ):
+            print( n, attr['text'], attr['quantity'] )
+        for n,v in consumption.items():
+            print( n, v )
+
+    return flow, utility
 
 
     

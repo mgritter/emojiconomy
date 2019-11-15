@@ -89,7 +89,7 @@ def run_econ( default_maximum = 10, maximums = {} ):
     drawSvg( a.graph, "econ.svg" )
     
     g2 = a.graph.copy()
-    g3 = flow_to_consumables( g2, None )
+    g3, utility = flow_to_consumables( g2, None )
     for e in g3.edges:
         g3.edges[e]['tag'] = str( int( g3.edges[e]['flow'] ) )
 
