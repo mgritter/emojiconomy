@@ -645,8 +645,8 @@ def flow_to_consumables( g,
     if all_initial_goods > 0:
         f.set_initial_goods( all_initial_goods )
         
-    for (i,j),f in fixed_flows:
-        f.set_fixed_flow( i, j, f )
+    for (i,j),a in fixed_flows:
+        f.set_fixed_flow( i, j, a )
     if verbose:
         print( "Simplices:" )
         for s in f.simplices:
