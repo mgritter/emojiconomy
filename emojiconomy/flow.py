@@ -143,9 +143,6 @@ class FlowModel(object):
         min_flow_required = sum( f for i,j,f in min_flow )
         # Might go negative.
         available -= min_flow_required
-        if available < 0:
-            g.graph['negative_flows'] = True
-            
         outputs = g.out_edges(n,data=True)
         if relaxed:                    
             # Interpret as 0--1 simplex
@@ -156,6 +153,8 @@ class FlowModel(object):
         elif len( outputs ) == 1:
             for (i,j,attr) in outputs:
                 if attr['min_flow'] == 0:
+                    if available < 0:
+                        g.graph['negative_flows'] = True
                     g.edges[(i,j)]['flow'] = available
             g.nodes[n]['slack'] = 0
         else:      
@@ -172,12 +171,16 @@ class FlowModel(object):
                 g.nodes[n]['slack'] = available - total
             else:
                 # Infeasible, scale down
-                for (i,j,attr) in outputs:
-                    if attr['min_flow'] == 0:
-                        rounded_flow = available * attr['weight'] // total
-                        available -= rounded_flow
-                        g.edges[(i,j)]['flow'] = rounded_flow
-                        # print( (i,j), "rounded flow", rounded_flow )
+                if total != 0:
+                    for (i,j,attr) in outputs:
+                        if attr['min_flow'] == 0:
+                            rounded_flow = available * attr['weight'] // total
+                            available -= rounded_flow
+                            g.edges[(i,j)]['flow'] = rounded_flow
+                            if rounded_flow < 0:
+                                g.graph['negative_flows'] = True
+
+                            # print( (i,j), "rounded flow", rounded_flow )
                 g.nodes[n]['slack'] = available
         
     def compute_flow( self,
