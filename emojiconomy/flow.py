@@ -642,6 +642,7 @@ def flow_to_consumables( g,
                          metric = None,
                          all_initial_goods = 1000,
                          fixed_flows = [],
+                         starting_flow = None,
                          verbose = True ):
     f = FlowModel( g, metric )
     f.find_parameters()
@@ -655,7 +656,18 @@ def flow_to_consumables( g,
         for s in f.simplices:
             print( "  ", s )
 
-    x_init = f.relaxed_start()
+    if starting_flow is None:
+        x_init = f.relaxed_start()
+    else:
+        x_init = []
+        for s in f.simplices:
+            total = 0.0
+            xs = [ starting_flow.edges[e]['flow'] for e in s ]
+            total = sum( xs )
+            if total > 0.0:
+                xs = [ x_i / total for x_i in xs ]
+            x_init.extend( xs )
+        
     flow, consumption, utility, x = gradient_solver( f, x_init )
 
     if verbose:
