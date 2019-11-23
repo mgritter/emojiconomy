@@ -52,6 +52,65 @@ def add_exports( g, amounts ):
         flows.append( ( (n, "EXP"), a ) )
     return flows
 
+def show_bids_asks( bids, asks ):
+    array = {}
+    cols = set()
+    contract_sizes = set()
+    for (i,i_a,e,e_a) in bids:
+        if e not in array:
+            array[e] = {}
+        # "I will pay e_a of e for to import on i_a of i"
+        array[e][i] = e_a
+        cols.add( i )
+        contract_sizes.add( i_a )
+        
+    rows = list( array.keys() )
+    rows.sort()
+    cols = list( cols )
+    cols.sort()
+
+    print( "Bids, contract sizes", " ".join( str(x) for x in contract_sizes ) )
+    header = " ".join( [ "EXP\IMP" ] + [ "{:2}".format( c ) for c in cols ] )
+    print( header )
+    for exp in rows:
+        row_items = [ "[{:5}]".format( exp ) ]
+        for i in cols:
+            if i in array[exp]:
+                row_items.append( "{:2}".format( array[exp][i] ) )
+            else:
+                row_items.append( "  " )
+        print( " ".join( row_items ) )
+
+
+    array = {}
+    cols = set()
+    contract_sizes = set()
+    for (e,e_a,i,i_a) in asks:
+        if e not in array:
+            array[e] = {}
+        # "I will accept i_a of i to export e_a on e"
+        array[e][i] = i_a
+        cols.add( i )
+        contract_sizes.add( e_a )
+        
+    rows = list( array.keys() )
+    rows.sort()
+    cols = list( cols )
+    cols.sort()
+
+    header = " ".join( [ "EXP\IMP" ] + [ "{:2}".format( c ) for c in cols ] )
+    print()
+    print( "Asks, contract sizes", " ".join( str(x) for x in contract_sizes ) )
+    print( header )
+    for exp in rows:
+        row_items = [ "[{:5}]".format( exp ) ]
+        for i in cols:
+            if i in array[exp]:
+                row_items.append( "{:2}".format( array[exp][i] ) )
+            else:
+                row_items.append( "  " )
+        print( " ".join( row_items ) )
+
 
 class Planet(object):
     def __init__( self, id, graph ):
@@ -81,14 +140,81 @@ class Planet(object):
         else:
             self.current_flow, self.current_utility = self.calc_utility()
 
-    def bids_asks( self, t ):
-        # Bids: for each export-import pair, what is the least number of
-        # imports needed to reach positive utility?
+    def bids_asks( self, goods, contract_size ):
+        # Asks: for each export-import pair, and fixed export contract size,
+        # what is the minimum number of imports needed to reach positive
+        # utility? (Will accept more, of course.)
         #
-        # Asks: for each import-export pair, what is the largest number
-        # of exports that we can afford to pay?
-        
-        
+        # Bids: for each export-import pair, with fixed import contract size,
+        # what is the maximum number of exports that we can afford to pay?
+        # The problem with this is that it may be 1000, but paying 1000
+        # gives up future ability for a better deal.
+        # For now, artificially cap contract size at 100.
+        #
+        asks = []
+        bids = []
+        for exp in goods:
+            print( exp, end="" )
+            # Asks
+            if self.has_items( exp, contract_size ):
+                for imp in goods:
+                    if exp == imp:
+                        continue
+                    print( ".", end ="", flush=True )
+                    #print( "exp", exp, "imp", imp )
+                    # Find minimum imp
+                    lb = 0
+                    ub = 100
+                    lb_surplus = None
+                    ub_surplus = None
+                    while lb + 1 < ub:
+                        amount = (lb + ub) // 2
+                        flow, utility = self.calc_utility(
+                            additional_exports=[(exp,contract_size)],
+                            additional_imports=[(imp,amount)]
+                        )
+                        surplus = utility - self.current_utility
+                        #print( "Testing import of", amount, "=", surplus )
+                        if surplus <= 0.0:
+                            lb_surplus = lb
+                            lb = amount
+                        else:
+                            ub_surplus = ub
+                            ub = amount
+                    if ub_surplus is not None:
+                        #print( "Added ask at", ub )
+                        asks.append( (exp,contract_size,imp,ub) )
+            # Bids
+            for imp in goods:
+                if exp == imp:
+                    continue
+                print( ".", end ="", flush=True )
+                #print( "exp", exp, "imp", imp )
+                # Find maximum exp
+                lb = 0
+                ub = min( 100, self.current_flow.nodes[exp]['quantity'] )
+                lb_surplus = None
+                ub_surplus = None
+                while lb + 1 < ub:
+                    amount = (lb + ub + 1) // 2
+                    flow, utility = self.calc_utility(
+                        additional_exports=[(exp,amount)],
+                        additional_imports=[(imp,contract_size)]
+                    )
+                    surplus = utility - self.current_utility
+                    #print( "Testing export of", amount, "=", surplus )
+                    if surplus >= 0.0:
+                        lb_surplus = lb
+                        lb = amount
+                    else:
+                        ub_surplus = ub
+                        ub = amount
+                if lb_surplus is not None:
+                    #print( "Added bid at", lb )
+                    bids.append( (imp,contract_size,exp,lb) )
+        print( "", flush=True )
+        return bids, asks
+
     def export_value( self, good, amount = 1 ):
         flow, utility = self.calc_utility( additional_exports=[(good,amount)] )
         delta = utility - self.current_utility
@@ -288,6 +414,19 @@ class Galaxy(object):
             p.base_utility = utility
             p.current_utility = utility
             p.current_flow = flow
+
+            if True:
+                bids, asks = p.bids_asks( self.goods, 4 )
+                show_bids_asks( bids, asks )
+                
+                #print( "Contract size 4, bids" )
+                #print( "IMP size   EXP upper_bound" )
+                #for b in bids:
+                #    print( b )
+                #print( "Contract size 4, asks:" )
+                #print( "EXP size   IMP lower_bound" )
+                #for a in asks:
+                #    print( a )
 
             if False:
                 imp, exp = p.import_export_hints( self.goods )
