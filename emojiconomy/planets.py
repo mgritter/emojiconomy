@@ -28,6 +28,25 @@ class Trade(object):
         for n,a in self.dst_items.items():
             print( self.dst, "<-", a, "x", graph.nodes[n]['text'], n )
 
+    def to_html( self, graph, out ):
+        print( '<p>', file=out)
+        for n,a in self.src_items.items():
+            print( a, "x", graph.nodes[n]['tag'], file=out )
+        print( " <=> ", file=out )
+        for n,a in self.dst_items.items():
+            print( a, "x", graph.nodes[n]['tag'], file=out )
+        print( '</p>', file=out)
+
+    def to_html_rev( self, graph, out ):
+        print( '<p>', file=out)
+        for n,a in self.dst_items.items():
+            print( a, "x", graph.nodes[n]['tag'], file=out )
+        print( " <=> ", file=out )
+        for n,a in self.src_items.items():
+            print( a, "x", graph.nodes[n]['tag'], file=out )
+        print( '</p>', file=out)
+
+        
     def increase_dst_count( self, amount=1 ):
         for n in self.dst_items:
             self.dst_items[n] += amount
@@ -470,6 +489,48 @@ class Galaxy(object):
         if self.trade_log is not None:
             self.trade_log.close()
             self.trade_log = None
+
+    def draw_trade_report( self, prefix="planets" ):
+        g = nx.Graph()
+        for p in self.planets:
+            g.add_node( p )
+
+        for t in self.trades.values():
+            a = min( t.src, t.dst )
+            b = max( t.src, t.dst )
+            edge = (a,b)
+            
+            if edge not in g.edges:
+                g.add_edge( a, b, volume=0,
+                            id="trade{}x{}".format( a, b ) )
+
+            vol = sum( t.src_items.values() ) + sum( t.dst_items.values() )
+            g.edges[edge]['volume'] += vol
+
+        for e in g.edges():
+            g.edges[e]['tag'] = str( g.edges[e]['volume'] )
+
+        drawSvg( g, prefix + "-trade-volume.svg", program="neato",
+                 dotFile = "debug-trade-volume.dot" )
+
+        with open( "divs.html", "w" ) as out:
+            for e in g.edges():
+                (src,dst) = e
+                a = min( src, dst )
+                b = max( src, dst )
+                print( '<div style="display: none;" id="detailstrade{}x{}">'.format( a, b ),
+                       file=out )
+                print( "<h2>Trade between", a, "and", b, "</h2>",
+                       file=out )
+                for t in self.trades.values():
+                    if t.src == a and t.dst == b:
+                        t.to_html( self.full_graph, out )
+                    elif t.src == b and t.dst == a:
+                        t.to_html_rev( self.full_graph, out )
+                print( '</div>',
+                       file=out )
+            
+        
         
     def draw_trade_graph( self, prefix="planets" ):
         g = nx.DiGraph()
@@ -929,5 +990,13 @@ def main():
     galaxy.draw( draw_planets = True )
     galaxy.draw_trade_graph()
 
+import sys
+
+galaxy = None
+
 if __name__ == "__main__":
-    main()
+    if len( sys.argv ) > 1 and sys.argv[1] == 'reload':
+        with open( "galaxy.pickle", "rb") as f:
+            galaxy = pickle.load( f )
+    else:
+        main()
