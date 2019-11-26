@@ -156,6 +156,12 @@ class FlowModel(object):
                     if available < 0:
                         g.graph['negative_flows'] = True
                     g.edges[(i,j)]['flow'] = available
+                elif j == 'EXP':
+                    # Don't export more than is available.
+                    # FIXME: come up with a less hackish way to do this.
+                    if available < 0:
+                        print( "WARNING: export took us negative." )
+                        g.graph['negative_flows'] = True
             g.nodes[n]['slack'] = 0
         else:      
             # Interpret as item counts, if feasible
