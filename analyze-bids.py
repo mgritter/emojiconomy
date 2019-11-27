@@ -4,9 +4,11 @@ class Seller(object):
         self.iteration = int( tokens[0] )
         self.cost = float( tokens[1] )
         self.planet = tokens[2]
-        self.good = int( tokens[3] )
-        self.amount = int( tokens[4] )
-
+        # 3 type
+        self.good = int( tokens[4] )
+        self.amount = int( tokens[5] )
+        # 6 available
+        
         self.bids = []
         self.trade = None
         
@@ -15,23 +17,25 @@ class Bid(object):
         tokens = line.split( " " )
         self.iteration = int( tokens[0] )
         self.planet = tokens[1]
-        self.good = int( tokens[2] )
-        self.amount = int( tokens[3] )
+        # 2 type
+        self.good = int( tokens[3] )
+        self.amount = int( tokens[4] )
 
 class Trade(object):
     def __init__( self, line ):
         tokens = line.split( " " )
         self.id = int( tokens[0] )
-        self.seller = tokens[1]
-        self.s_good = int( tokens[2] )
-        self.s_amount = int( tokens[3] )
+        self.iteration = int( tokens[1] )
+        self.seller = tokens[2]
+        self.s_good = int( tokens[3] )
+        self.s_amount = int( tokens[4] )
 
-        self.buyer = tokens[5]
-        self.b_good = int( tokens[6] )
-        self.b_amount = int( tokens[7] )
+        self.buyer = tokens[6]
+        self.b_good = int( tokens[7] )
+        self.b_amount = int( tokens[8] )
 
-def load_logs( seller_log = "bids-seller.txt",
-               bid_log = "bids-bids.txt",
+def load_logs( seller_log = "bids-auction.txt",
+               bid_log = "bids-bidders.txt",
                trade_log = "bids-trade.txt" ):
     goods = set()
     sellers = []

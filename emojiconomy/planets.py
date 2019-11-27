@@ -684,6 +684,8 @@ class Galaxy(object):
             self.trade_log.close()
             self.trade_log = None
 
+        self.auction.stop_log()
+
     def draw_trade_report( self, prefix="planets" ):
         g = nx.Graph()
         for p in self.planets:
