@@ -176,83 +176,6 @@ class Planet(object):
         else:
             self.current_flow, self.current_utility = self.calc_utility()
 
-    def bids_asks( self, goods, contract_size ):
-        # Asks: for each export-import pair, and fixed export contract size,
-        # what is the minimum number of imports needed to reach positive
-        # utility? (Will accept more, of course.)
-        #
-        # Bids: for each export-import pair, with fixed import contract size,
-        # what is the maximum number of exports that we can afford to pay?
-        # The problem with this is that it may be 1000, but paying 1000
-        # gives up future ability for a better deal.
-        # For now, artificially cap contract size at 100.
-        #
-        asks = []
-        bids = []
-        for exp in goods:
-            print( exp, end="" )
-            # Asks
-            if self.has_items( exp, contract_size ):
-                for imp in goods:
-                    if exp == imp:
-                        continue
-                    print( ".", end ="", flush=True )
-                    #print( "exp", exp, "imp", imp )
-                    # Find minimum imp
-                    lb = 0
-                    ub = 100
-                    lb_surplus = None
-                    ub_surplus = None
-                    while lb + 1 < ub:
-                        amount = (lb + ub) // 2
-                        flow, utility = self.calc_utility(
-                            additional_exports=[(exp,contract_size)],
-                            additional_imports=[(imp,amount)]
-                        )
-                        surplus = utility - self.current_utility
-                        #print( "Testing import of", amount, "=", surplus )
-                        if surplus <= 0.0:
-                            lb_surplus = lb
-                            lb = amount
-                        else:
-                            ub_surplus = ub
-                            ub = amount
-                    if ub_surplus is not None:
-                        #print( "Added ask at", ub )
-                        asks.append( (exp,contract_size,imp,ub) )
-            # Bids
-            for imp in goods:
-                if exp == imp:
-                    continue
-                print( ".", end ="", flush=True )
-                #print( "exp", exp, "imp", imp )
-                # Find maximum exp
-                lb = 0
-                ub = min( 100, self.num_available_for_export(exp) )
-                lb_surplus = None
-                ub_surplus = None
-                while lb + 1 < ub:
-                    amount = (lb + ub + 1) // 2
-                    flow, utility = self.calc_utility(
-                        additional_exports=[(exp,amount)],
-                        additional_imports=[(imp,contract_size)]
-                    )
-                    surplus = utility - self.current_utility
-                    #print( "Testing export of", amount, "=", surplus )
-                    if surplus >= 0.0:
-                        lb_surplus = lb
-                        lb = amount
-                    else:
-                        ub_surplus = ub
-                        ub = amount
-                if lb_surplus is not None:
-                    #print( "Added bid at", lb )
-                    bids.append( (imp,contract_size,exp,lb) )
-        print( "", flush=True )
-        self.bids = bids
-        self.asks = asks
-        return bids, asks
-
     def export_value( self, good, amount = 1, recursive_depth = 0 ):
         if recursive_depth > 3:
             print( "Recursion too deep, giving up." )            
@@ -280,16 +203,22 @@ class Planet(object):
         delta = utility - self.current_utility
         return delta
 
-    def bids_for_import( self, exportable_goods, import_good, contract_size ):
-        key = (import_good,contract_size)
-        if key in self.cached_bids:
-            return self.cached_bids[key]
-
+    def minimum_profit( self, contract_size ):
         # 0.01 at 100
         # 0.0036 at 36
         # 0.0012 at 12
         # 0.0004 at 4
-        min_profit = contract_size * 0.0001
+        return contract_size * 0.0001
+
+    def bids_for_import( self, exportable_goods, import_good, contract_size ):
+        """Given a good for purchase, what bids could pay for it?
+        Return a truthful maximum price and we can run a 
+        second-price auction."""
+        key = ("bid",import_good,contract_size)
+        if key in self.cached_bids:
+            return self.cached_bids[key]
+
+        min_profit = self.minimum_profit( contract_size )
         bids = []
         for g in exportable_goods:
             if g == import_good:
@@ -319,6 +248,50 @@ class Planet(object):
             if lb_surplus is not None:
                 #print( "Added bid at", lb )
                 bids.append( (g,lb) )
+
+        self.cached_bids[key] = bids
+        return bids
+
+    def asks_for_export( self, importable_goods, export_good, contract_size ):
+        """Given a desired good, what goods would be accepted in exchange?
+        i.e., "I need X lemons, what would I have to pay"?
+        Return the minimum acceptable and we'll run a second-price 
+        reverse auction."""
+
+        if not self.has_items( export_good, contract_size ):
+            return []
+
+        key = ("ask",export_good,contract_size)
+        if key in self.cached_bids:
+            return self.cached_bids[key]
+        
+        min_profit = self.minimum_profit( contract_size )
+        bids = []
+        for g in importable_goods:
+            if g == export_good:
+                continue
+            # Find minimum amount
+            lb = 0
+            lb_surplus = None
+            ub = contract_size * 2 + 1
+            while lb + 1 < ub:
+                amount = (lb + ub) // 2
+                flow, utility = self.calc_utility(
+                    additional_exports=[(export_good,contract_size)],
+                    additional_imports=[(g,amount)],
+                )
+                surplus = utility - self.current_utility
+                if surplus > min_profit:
+                    # Look for lower ask
+                    ub = amount
+                    ub_surplus = lb
+                else:
+                    # Look for higher ask
+                    lb = amount
+
+            if ub_surplus is not None:
+                #print( "Added bid at", lb )
+                bids.append( (g,ub) )
 
         self.cached_bids[key] = bids
         return bids
@@ -447,35 +420,35 @@ class Planet(object):
             flows += add_exports( g, outgoing_flows )
         return g, flows
 
-class Galaxy(object):
+class Seller(object):
     def __init__( self ):
-        self.planets = {}
-        self.goods = []
-        self.next_trade_id = 100
-        self.trades = {}
+        self.planet = None
+        self.delta = 0.0
+        self.good = None
+        self.amount = None
+        self.auction_type = "sell"
+
+class Buyer(object):
+    def __init__( self ):
+        self.planet = None
+        self.good = None
+        self.amount = None
+    
+class Auction(object):
+    def __init__( self, galaxy ):
+        self.galaxy = galaxy
         self.seller_log = None
-        self.trade_log = None
         self.buyer_log = None
         
-        self.contract_schedule = [4, 12, 36, 100]
-        self.contract_index = 2
-        self.bid_exclusion = {}
-        self.bid_failure_count = 0
-        
     def start_log( self, prefix="bids" ):
-        self.seller_log = open( prefix + "-seller.txt", "w" )
-        print( "iteration", "cost", "exporter", "good", "amount", "available",
+        self.seller_log = open( prefix + "-auction.txt", "w" )
+        print( "iteration", "cost", "planet", "type",
+               "good", "amount", "available",
                file=self.seller_log )
 
-        self.buyer_log = open( prefix + "-bids.txt", "w" )
-        print( "iteration", "buyer", "good", "amount",
+        self.buyer_log = open( prefix + "-bidders.txt", "w" )
+        print( "iteration", "bidder", "type", "good", "amount",
                file=self.buyer_log )
-
-        self.trade_log = open( prefix + "-trade.txt", "w" )
-        print( "TradeID",
-               "exporter", "export_good", "export_amount", "export_surplus",
-               "importer", "import_good", "import_amount", "import_surplus",
-               file=self.trade_log )
 
     def stop_log( self ):
         if self.seller_log is not None:
@@ -485,7 +458,228 @@ class Galaxy(object):
         if self.buyer_log is not None:
             self.buyer_log.close()
             self.buyer_log = None
+
+    def choose_seller( self, iteration_count ):
+        pass
+
+    def choose_buyer( self, iteration_count, sellers, bids ):
+        pass
+
+    def successful_trade( self, trade ):
+        pass
+
+    def failed_trade( self, trade ):
+        pass
+
+    def failed_bidding( self, seller ):
+        pass
+    
+    def collect_orders( self, iteration_count, seller ):
+        """Collect the bids from all non-sellers."""
+
+        # FIXME: handle asks_for_export too.
         
+        bids = { g : [] for g in self.galaxy.useful_goods if g != seller.good }
+    
+        for p in self.galaxy.planets:
+            if p == seller.planet:
+                continue
+            p_bids = self.galaxy.planets[p].bids_for_import(
+                self.galaxy.useful_goods, seller.good, seller.amount )
+            print( "Planet", p, "bids (good,amount) =", p_bids )
+            for good, amount in p_bids:
+                bids[good].append( (amount, p) )
+
+        return bids
+
+    def best_second_price( self, iteration_count, seller, bids ):
+        """Second-price auction on each good; see which is most preferred
+        by the seller."""
+
+        seller_planet = self.galaxy.planets[seller.planet]
+        
+        preferred_bids = []
+        for g, order_book in bids.items():
+            order_book.sort()
+            print( "Bids using good", g, " (amount,bidder) = ", order_book )
+
+            if len( order_book ) == 0:
+                continue
+            elif len( order_book ) == 1:
+                second_price, bidder = order_book[0]
+            elif order_book[-1][0] != order_book[-2][0]:
+                # Different prices
+                second_price = order_book[-2][0]
+                bidder = order_book[-1][1]
+            else:
+                # Tied bidders, pick one randomly.                
+                second_price = order_book[-2][0]
+                assert order_book[-1][0] == second_price
+                high_bidders = [b for a,b in order_book if a == second_price ]
+                print( "tied bidders:", high_bidders )                
+                bidder = random.choice( high_bidders )
+
+
+            _, utility = seller_planet.calc_utility(
+                additional_exports=[(seller.good, seller.amount)],
+                additional_imports=[(g,second_price)]
+            )
+            surplus = utility - seller_planet.current_utility
+            print( "Second price:", second_price,
+                   "bidder", bidder,
+                   "exporter utility", utility,
+                   "surplus", surplus )
+            if utility > seller_planet.current_utility:
+                preferred_bids.append( (utility, g, second_price, bidder ) )
+
+        if len( preferred_bids ) == 0:
+            print( "No acceptable bids." )
+            return None
+        
+        preferred_bids.sort( reverse=True )
+        b = Buyer()
+        _, b.good, b.amount, b.planet = preferred_bids[0]
+        return b
+
+    def propose_trade( self, iteration_count ):
+        # Identify a seller (or buyer) to lead this round
+        s = self.choose_seller( iteration_count )
+        if s is None:
+            return None
+        
+        seller_available = self.galaxy.planets[s.planet].num_available_for_export( s.good )
+        
+        if self.seller_log is not None:
+            print( iteration_count,
+                   s.delta,
+                   s.planet,
+                   s.auction_type,
+                   s.good,
+                   s.amount,
+                   seller_available,
+                   file=self.seller_log, flush=True )
+
+        book = self.collect_orders( iteration_count, s )
+        if self.buyer_log is not None:
+            for good, bids in book.items():
+                for amount, p in bids:
+                    print( iteration_count,
+                           p, "buy", good, amount,
+                           file=self.buyer_log )
+        
+        winner = self.choose_buyer( iteration_count, s, book )
+        if winner is None:
+            self.failed_bidding( s )
+            return None
+
+        t = Trade( self.galaxy.next_trade_id, s.planet, winner.planet  )
+        self.galaxy.next_trade_id += 1
+        t.src_items[s.good] = s.amount
+        t.dst_items[winner.good] = winner.amount
+        return t    
+    
+class CheapestFirstAuction(Auction):
+    def __init__( self, galaxy ):
+        super().__init__( galaxy )
+        
+        self.contract_schedule = [4, 12, 36, 100]
+        self.contract_index = 3
+        self.bid_exclusion = set()
+        self.failed_count = 0
+
+    def failed_trade( self, t ):
+        for g in t.dst_items:
+            s = Seller()
+            s.planet = t.src
+            s.good = g
+            self.failed_bidding( s )
+        
+    def failed_bidding( self, seller ):
+        # Implement a descending contract size
+        self.bid_exclusion.add( (seller.planet, seller.good) )
+        self.failed_count += 1
+        if self.failed_count == 25:
+            self.failed_count = 0
+            if self.contract_index > 0:
+                # Reset for next phase
+                self.contract_index = self.contract_index - 1
+                self.bid_exclusion = set()
+            
+                    
+    def choose_buyer( self, i, s, b ):
+        return self.best_second_price( i, s, b )
+    
+    def choose_seller( self, iteration_count ):
+        galaxy = self.galaxy
+
+        contract_size = self.contract_schedule[self.contract_index]
+        print( "Contract size:", contract_size )
+        
+        # Find a low-value good to export, that has a use
+        best_export = (-1.0, None, None)
+        ties = []
+        for contract_good in self.galaxy.useful_goods:
+            export_values = []
+            for p, planet in galaxy.planets.items():
+                if not planet.has_items( contract_good, contract_size ):
+                    continue
+                # Delta should be <= 0.0, a 0.0 is the best
+                delta = planet.export_value( contract_good, contract_size )
+                print( "Planet", p, "good", contract_good, "delta", delta,
+                       "available", planet.num_available_for_export( contract_good ) )
+                if ( p, contract_good ) not in self.bid_exclusion:
+                    export_values.append( (delta, p, contract_good) )
+
+            # Exclude cases where all values are zero, not likely to work.
+            if sum( 1 for d,_,_ in export_values if d < 0.0 ) == 0:
+                continue
+            
+            best_export = max( [best_export] + export_values )
+            # Keep track of who has an equally low bid so we can randomize
+            # instead of deterministically picking the same planet all the time.
+            ties = [ (v,p,g) for v,p,g in ties + export_values if
+                     v == best_export[0] ]
+
+        print( len( ties ), "best exports" )
+        if len( ties ) == 0:
+            # Reset at smaller contract size?
+            self.bid_exclusion = ()
+            self.failed_count = 0
+            self.contract_index = min( self.contract_index - 1, 0 )
+            return None        
+        
+        best_delta, best_exporter, best_good = random.choice( ties )
+        print( "Chose exporter:", best_exporter,
+               "good:", best_good,
+               "delta:", best_delta )
+
+        s = Seller()
+        s.planet = best_exporter
+        s.delta = best_delta
+        s.good = best_good
+        s.amount = contract_size
+        s.auction_type = "sell"
+        return s
+        
+class Galaxy(object):
+    def __init__( self ):
+        self.planets = {}
+        self.goods = []
+        self.next_trade_id = 100
+        self.trades = {}
+        self.trade_log = None
+        self.buyer_log = None
+        self.auction = CheapestFirstAuction(self)
+        
+    def start_log( self, prefix="bids" ):
+        self.trade_log = open( prefix + "-trade.txt", "w" )
+        print( "TradeID", "iteration",
+               "exporter", "export_good", "export_amount", "export_surplus",
+               "importer", "import_good", "import_amount", "import_surplus",
+               file=self.trade_log )
+        self.auction.start_log( prefix )
+
+    def stop_log( self ):
         if self.trade_log is not None:
             self.trade_log.close()
             self.trade_log = None
@@ -623,145 +817,25 @@ class Galaxy(object):
                 #    print( a )
 
                             
-    def failed_bid( self, exporter, good, contract_size ):
-        self.bid_exclusion[(exporter, good, contract_size)] = 25
-
-        self.bid_failure_count += 1
-
-        if self.bid_failure_count >= 6:
-            # Try smaller contract next time
-            if self.contract_index > 0:
-                self.bid_failure_count = 0
-                self.contract_index -= 1        
-
-    def create_bid_trade( self, iteration_count ):
-        contract_size = self.contract_schedule[self.contract_index]
-        print( "Contract size:", contract_size )
-
-        # Age exclusion list
-        to_delete = []
-        for k in self.bid_exclusion:
-            self.bid_exclusion[k] -= 1
-            if self.bid_exclusion[k] <= 0:
-                to_delete.append( k )
-        for k in to_delete:
-            print( "Re-allowing contract", k )
-            del self.bid_exclusion[k]
-
-        # Find a low-value good to export, that has a use
-        best_export = (-1.0, None, None)
-        ties = []
-        for contract_good in self.useful_goods:
-            export_values = []
-            for p in self.planets:
-                planet = self.planets[p]
-                if not planet.has_items( contract_good, contract_size ):
-                    continue
-                # Delta should be <= 0.0, a 0.0 is the best
-                delta = planet.export_value( contract_good, contract_size )
-                print( "Planet", p, "good", contract_good, "delta", delta,
-                       "available", planet.num_available_for_export( contract_good ) )
-                # Don't retry failed contracts (immediately,anyway)
-                if not (p, contract_good, contract_size) in self.bid_exclusion:
-                    export_values.append( (delta, p, contract_good) )
-
-            # Exclude cases where all values are zero, not likely to work.
-            if sum( 1 for d,_,_ in export_values if d < 0.0 ) == 0:
-                continue
-            
-            best_export = max( [best_export] + export_values )
-            # Keep track of who has an equally low bid so we can randomize
-            # instead of deterministically picking the same planet all the time.
-            ties = [ (v,p,g) for v,p,g in ties + export_values if
-                     v == best_export[0] ]
-
-        print( len( ties ), "best exports" )
-        best_delta, best_exporter, best_good = random.choice( ties )
-        print( "Chose exporter:", best_exporter,
-               "good:", best_good,
-               "delta:", best_delta )
-
-        seller_available = self.planets[best_exporter].num_available_for_export( best_good )
-        if self.seller_log is not None:
-            print( iteration_count,
-                   best_delta, best_exporter, best_good, contract_size,
-                   seller_available,
-                   file=self.seller_log, flush=True )
-
-        bids = { g : [] for g in self.useful_goods if g != best_good }
-        
-        # Now everybody else bids on this
-        for p in self.planets:
-            if p == best_exporter:
-                continue
-            p_bids = self.planets[p].bids_for_import( self.useful_goods,
-                                                      best_good, contract_size )
-            print( "Planet", p, "bids (good,amount) =", p_bids )
-            for good, amount in p_bids:
-                if self.buyer_log is not None:
-                    print( iteration_count, p, good, amount, file=self.buyer_log )
-                bids[good].append( (amount, p) )
-
-        # we're gonna do a second-price auction, see which of the second-price
-        # bids is most prefered.
-        preferred_bids = []
-        for g, order_book in bids.items():
-            order_book.sort()
-            print( "Bids using good", g, " (amount,bidder) = ", order_book )
-
-            if len( order_book ) == 0:
-                continue
-            elif len( order_book ) == 1:
-                second_price, bidder = order_book[0]
-            elif order_book[-1][0] != order_book[-2][0]:
-                # Different prices
-                second_price = order_book[-2][0]
-                bidder = order_book[-1][1]
-            else:
-                # Tied bidders, pick one randomly.                
-                second_price = order_book[-2][0]
-                assert order_book[-1][0] == second_price
-                high_bidders = [b for a,b in order_book if a == second_price ]
-                print( "tied bidders:", high_bidders )                
-                bidder = random.choice( high_bidders )
-
-
-            _, utility = self.planets[best_exporter].calc_utility(
-                additional_exports=[(best_good,contract_size)],
-                additional_imports=[(g,second_price)]
-            )
-            surplus = utility - self.planets[best_exporter].current_utility
-            print( "Second price:", second_price,
-                   "bidder", bidder,
-                   "exporter utility", utility,
-                   "surplus", surplus )
-            if utility > self.planets[best_exporter].current_utility:
-                preferred_bids.append( (utility, g, second_price, bidder ) )
-
-        if len( preferred_bids ) == 0:
-            print( "No acceptable bids." )
-            self.failed_bid( best_exporter, best_good, contract_size )
+    def create_auction_trade( self, iteration_count ):
+        t = self.auction.propose_trade( iteration_count )
+        if t is None:
             return False
         
-        preferred_bids.sort( reverse=True )
-        _, b_good, b_amount, b = preferred_bids[0]
-
-        t = Trade( self.next_trade_id, best_exporter, b  )
-        self.next_trade_id += 1
-        t.src_items[best_good] = contract_size
-        t.dst_items[b_good] = b_amount
-
         # FIXME: redundant for A?
-        p_a = self.planets[best_exporter]
-        p_b = self.planets[b]
+        p_a = self.planets[t.src]
+        p_b = self.planets[t.dst]
         surplus_a = p_a.try_trade( t )
         surplus_b = p_b.try_trade( t )
 
         if self.trade_log is not None:
+            src_good, src_amount = list( t.src_items.items() )[0]
+            dst_good, dst_amount = list( t.dst_items.items() )[0]
+            
             print( t.id,
-                   #self.iteration_count
-                   best_exporter, best_good, contract_size, surplus_a,
-                   b, b_good, b_amount, surplus_b,
+                   iteration_count,
+                   t.src, src_good, src_amount, surplus_a,
+                   t.dst, dst_good, dst_amount, surplus_b,
                    file=self.trade_log,
                    flush=True )
 
@@ -770,20 +844,14 @@ class Galaxy(object):
             t.show( self.full_graph )
             p_a.add_trade( t )
             p_b.add_trade( t )
-            self.bid_failure_count = 0
-
-            if best_delta == 0.0 or len( ties ) > 2 or \
-               len( preferred_bids ) > 2 or \
-               seller_available > 400:
-                # Try larger contract next time
-                if self.contract_index < len( self.contract_schedule ) - 1:
-                    self.contract_index += 1
+            
+            self.auction.successful_trade( t )
             return True
         else:
             print( "Trade didn't work out, a=", surplus_a, "b=", surplus_b )
-            self.failed_bid( best_exporter, best_good, contract_size )
+            self.auction.failed_trade( t )
             return False 
-                        
+        
     def create_suggested_trade( self ):
         a, b = random.sample( self.planets.keys(), 2 )
         p_a = self.planets[a]
@@ -972,7 +1040,7 @@ def main():
     galaxy.start_log()
 
     for n in range( 200 ):
-        if galaxy.create_bid_trade( n ):
+        if galaxy.create_auction_trade( n ):
             galaxy.report()
         #if galaxy.create_suggested_trade():
         #    galaxy.report()
@@ -998,5 +1066,8 @@ if __name__ == "__main__":
     if len( sys.argv ) > 1 and sys.argv[1] == 'reload':
         with open( "galaxy.pickle", "rb") as f:
             galaxy = pickle.load( f )
+        if len( sys.argv ) > 2 and sys.argv[2] == 'auction':
+            galaxy.auction = CheapestFirstAuction( galaxy )
+            galaxy.create_auction_trade( 300 )
     else:
         main()
