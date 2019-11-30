@@ -3,6 +3,10 @@ from networkx.algorithms.dag import topological_sort
 
 import math
 import itertools
+import time
+
+#opt_log = open( "optimization.log", "a" )
+opt_log = None
 
 def amount_consumed( g ):
     sinks = [ n for n,t in g.nodes.data( 'tag' ) if t == 'sink']
@@ -457,19 +461,30 @@ def possible_decreases( simplex, needed ):
             for d in possible_decreases( simplex[1:], needed - i ):
                 yield [-i] + d            
                
-def augmenting_path_solver( f , x, verbose = False ):
+def augmenting_path_solver( f , x, verbose = False,
+                            max_iterations = 2000 ):
     flow, consumption, y = f.compute_flow( x )
     if verbose:
         print( "Start:", y, x )
 
-    while True:
-        # Attempt to increase consumption of a good by 1.
-        # FIXME: use 2?
+    num_iterations = 0
+    start_time = time.monotonic()
+    visited = []
+    step_size = 1
+    
+    big_delta = None
+    success_big = 0
+
+    rolling_history = [ None ] * 6
+    success_hist = 0
+    
+    while num_iterations < max_iterations:
+        # Attempt to increase consumption of a good by 1 (or 10.)
         paths = []
         sinks = [ n for n,t in flow.nodes.data( 'tag' ) if t == 'sink']
         memo = {}
         for i,j,e in flow.in_edges( sinks, data=True ):
-            for p in augmenting_paths( flow, i, 1, memo ):
+            for p in augmenting_paths( flow, i, step_size, memo ):
                 p.append( (i,j,1) )
                 paths.append( p )
 
@@ -515,10 +530,29 @@ def augmenting_path_solver( f , x, verbose = False ):
             for x_p in x_for_path:
                 if x_p != x and nonnegative( x_p ):
                     neighbors[tuple(x_p)] = p
-        
+
+        # Heuristics:
+        # * 10x a successful delta
+        # * sum of last 2-6 successful deltas
+        if big_delta is not None:
+            x_big = list( x + d for x,d in zip( x, big_delta ) )
+            if min( x_i >= 0 for x_i in x_big ):
+                neighbors[ tuple(x_big) ] = "repeat"
+
+        x_history = x
+        for j in range( 1, len( rolling_history ) + 1 ):
+            if rolling_history[-j] is None:
+                break
+            x_history = list( x_i + d_i for x_i,d_i in zip( x_history,
+                                                            rolling_history[-j]) )
+            if i > 1 and min( x_i >= 0 for x_i in x_history ):
+                neighbors[ tuple( x_history) ] = "rolling_history"
+                            
         neighborhood = [ (x_p, f.compute_flow( x_p ),p)
                          for (x_p,p) in neighbors.items() ]
 
+        num_iterations += 1
+        
         if verbose:
             print( "num neighbors:", len( neighborhood ) )
 
@@ -529,20 +563,53 @@ def augmenting_path_solver( f , x, verbose = False ):
             max( neighborhood, key = lambda t : t[1][2] )
         if verbose:
             print( "Best:", y_p, x_p ) 
-            print( "Best path: ", best_path ) 
+            print( "Best path: ", best_path )
+
+        assert sum( x_i for x_i in x_p if x_i < 0 ) == 0
+        
+        visited.append( (x_p, y_p) )
 
         if y_p <= y:
             if verbose:
                 for n in neighborhood:
                     print( "X=",n[0], "Y=", n[1][2], "P=", n[2] )
                     # print( n[1][1] )
+            # end the search
             break
         else:
+            delta = tuple( (x_2 - x_1) for x_1, x_2 in zip( x, x_p ) )
+            
+            if best_path == "big_delta":
+                success_big += 1
+            else:
+                big_delta = tuple( 10*d_i for d_i in delta )
+
+            if best_path == "rolling_history":
+                success_hist += 1
+            else:
+                if best_path != "big_delta":
+                    rolling_history = rolling_history[1:] + [delta]            
+                
             flow = f_p
             consumption = c_p
             y = y_p
             x = x_p
-                
+
+    if opt_log is not None:
+        if max_iterations == 1:
+            label = "precheck"
+        else:
+            label = "augment"
+            
+        end_time = time.monotonic()
+        print( label, end_time - start_time, num_iterations,
+               success_big, success_hist,
+               y, file=opt_log, flush=True )
+
+        if num_iterations > 25:
+            print( "augmenthistory", visited,
+                   file=opt_log, flush=True )
+
     return flow, consumption, y, x
         
 
@@ -551,11 +618,40 @@ def augmenting_path_solver( f , x, verbose = False ):
 def show_vector( v ):
     return "[" + ", ".join( "{:0.2f}".format( x ) for x in v ) + "]"
 
+def direction( v1, v2 ):
+    return [(x2-x1) for x1,x2 in zip(v1,v2) ]
 
-def gradient_solver( f, x, debug_gradient = False ):
+def directional_angle( v1, v2 ):
+    dot_product = sum(x1 * x2 for x1,x2 in zip(v1,v2) )
+    magnitude = math.sqrt( sum(x1**2 for x1 in v1 ) * sum( x2**2 for x2 in v2) )
+    if magnitude == 0:
+        return math.pi
+    cos_theta = max( min( dot_product / magnitude, 1.0 ), -1.0 )
+    return math.acos( cos_theta )
+
+def line_solver( f, best_x, grad, step, best_flow, best_consumption, best_y ):
+    for iter in range( 200 ):
+        x_p = [ x_i + step * g_i  for x_i,g_i in zip( best_x, grad ) ]
+        x_p = f.project_onto_simplices( x_p )
+        f_p, c_p, y_p = f.compute_flow( x_p, relaxed = True )
+        if y_p <= best_y:
+            break
+        
+        best_x = x_p
+        best_flow = f_p
+        best_consumption = c_p
+        best_y = y_p
+
+    return best_x, best_flow, best_consumption, best_y
+                 
+def gradient_solver( f, x, debug_gradient = False,
+                     initial_step = 0.1 ):
     flow, consumption, y = f.compute_flow( x, relaxed=True )
     beta = 0.4
-    step = 0.1
+    step = initial_step
+    num_iterations = 0
+    num_successes = 0
+    start_time = time.monotonic()
     
     if False:
         for (n,attr) in flow.nodes( data=True ):
@@ -563,10 +659,15 @@ def gradient_solver( f, x, debug_gradient = False ):
             for (i,j,attr) in flow.edges( data=True ):
                 print( i, j, attr['flow'] )
 
-    for k in range( 1, 200  ):
-        grad = f.gradient( x, y )
-        if debug_gradient:
-            print( "Gradient:    ", show_vector( grad ) )
+    visited = [ (x,y) ]
+    recalc_gradient = True
+    last_delta = None
+    
+    for k in range( 1, 201 ):
+        if recalc_gradient:
+            grad = f.gradient( x, y )
+            if debug_gradient:
+                print( "Gradient:    ", show_vector( grad ) )
 
         x_p = [ x_i + step * g_i 
                 for x_i,g_i in zip( x, grad ) ]
@@ -577,6 +678,19 @@ def gradient_solver( f, x, debug_gradient = False ):
             print( "y=", "{:0.5f}".format( y_p ),
                    "at", show_vector( x_p ) )
 
+        # Compute angle between previous step and this one.
+        curr_delta = direction( x, x_p )
+        if last_delta is not None:
+            curr_angle = directional_angle( last_delta, curr_delta )
+            if debug_gradient:
+                print( "angle to last step =", curr_angle )
+        else:
+            curr_angle = None            
+        last_delta = curr_delta
+            
+        visited.append( (x_p, y_p) )
+        num_iterations += 1
+        
         # The "backtracking" algorithm compares real improvement with the
         # estimate step/2 * ||grad||^2.
         # If improvement is negative, or too small, decrease step size.
@@ -593,19 +707,44 @@ def gradient_solver( f, x, debug_gradient = False ):
         if debug_gradient:
             print( "Improvement=", y_p - y, "bound=", bound )
         
-        if y_p - y < bound:
+        if y_p - y <= bound:
             step *= beta
             if debug_gradient:
                 print( "Reducing step to", step )
             if step < 0.000001:
                 break
+        elif curr_angle is not None and curr_angle < 0.005 and y_p > y:
+            # If last two steps were in the same direction, try using a line solver
+            # to figure out how far we can go.
+            # The threshold value was found by looking at examples where we seem to
+            # get stuck. Could we just use the line solver always?
+            if debug_gradient:
+                print( "Switching to line solver." )
+            x_p, f_p, c_p, y_p = line_solver( f, x_p, grad, step, f_p, c_p, y_p )
 
         if y_p > y:
+            recalc_gradient = True
+            num_successes += 1
             y = y_p
             x = x_p
             flow = f_p
             consumption = c_p
+        else:
+            # Just try a smaller step size
+            recalc_gradient = False
 
+
+    if opt_log is not None:
+        end_time = time.monotonic()
+        print( "gradient",
+               end_time - start_time,
+               num_iterations, num_successes,
+               y, file=opt_log, flush=True )
+        if num_iterations > 150:
+            print( "gradhistory",
+                   visited,
+                   file=opt_log, flush=True )
+            
     return flow, consumption, y, x
 
 def add_imports( g ):
@@ -666,13 +805,30 @@ def flow_to_consumables( g,
         x_init = f.relaxed_start()
     else:
         x_init = []
+        x_exact = []
+        
         for s in f.simplices:
             total = 0.0
             xs = [ starting_flow.edges[e]['flow'] for e in s ]
+            x_exact.extend( xs )
+            
             total = sum( xs )
             if total > 0.0:
                 xs = [ x_i / total for x_i in xs ]
             x_init.extend( xs )
+
+        if False:
+            # This precheck is ineffective because we're usually
+            # not running exactly the same flow.  It might work if we
+            # checked the value.
+            flow, consumption, utility, x_test = \
+                augmenting_path_solver( f, x_exact,
+                                        max_iterations = 1 )
+            if x_test == x_exact:
+                if verbose:
+                    print( "No improvement, quitting early." )
+                    return flow, utility
+        
         
     flow, consumption, utility, x = gradient_solver( f, x_init )
 

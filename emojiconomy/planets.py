@@ -643,7 +643,7 @@ class CheapestFirstAuction(Auction):
         print( len( ties ), "best exports" )
         if len( ties ) == 0:
             # Reset at smaller contract size?
-            self.bid_exclusion = ()
+            self.bid_exclusion = {}
             self.failed_count = 0
             self.contract_index = min( self.contract_index - 1, 0 )
             return None        
