@@ -5,8 +5,8 @@ import math
 import itertools
 import time
 
-#opt_log = open( "optimization.log", "a" )
-opt_log = None
+opt_log = open( "optimization.log", "a" )
+#opt_log = None
 
 def amount_consumed( g ):
     sinks = [ n for n,t in g.nodes.data( 'tag' ) if t == 'sink']
@@ -412,23 +412,33 @@ def augmenting_paths( flow, good, amount, memo ):
     choices = [[]]
 
     if flow.nodes[good]['category'] == 'factory':
-        # Augment all inputs, by 1/2 the amount
+        # Augment all inputs, by 1/Nth the amount
         inputs = []
+        num_inputs = flow.in_degree( good )
         for i,j,e in flow.in_edges( [good], data=True ):
-            needed = (amount+1) // 2
+            needed = (amount + num_inputs - 1 ) // num_inputs
             inputs.append( [a + [(i,j,needed)]
                             for a in augmenting_paths( flow, i, needed, memo ) ] )
-        assert len( inputs ) == 2
-        # Combination of all ways to increase input A, with all
-        # ways to simultanously increase input B.
-        for a in inputs[0]:
-            for b in inputs[1]:
-                choices.append( a + b )
+        assert len( inputs ) >= 2 and len( inputs ) <= 3
+        if len( inputs ) == 2:
+            # Combination of all ways to increase input A, with all
+            # ways to simultanously increase input B.
+            for a in inputs[0]:
+                for b in inputs[1]:
+                    choices.append( a + b )
+        else:
+            for a in inputs[0]:
+                for b in inputs[1]:
+                    for c in inputs[2]:
+                        choices.append( a + b + c)
+                    
     elif flow.nodes[good]['category'] == 'process':
         # Augment input by 2x the amount
+        num_outputs = flow.out_degree( good )
+        assert num_outputs >= 1 and num_outputs <= 2
         inputs = []
         for i,j,e in flow.in_edges( [good], data=True ):
-            needed = amount * 2
+            needed = amount * num_outputs
             inputs.append( [ a + [(i,j,needed)]
                              for a in augmenting_paths( flow, i, needed, memo ) ] )
         assert len( inputs ) == 1
@@ -537,7 +547,7 @@ def augmenting_path_solver( f , x, verbose = False,
         if big_delta is not None:
             x_big = list( x + d for x,d in zip( x, big_delta ) )
             if min( x_i >= 0 for x_i in x_big ):
-                neighbors[ tuple(x_big) ] = "repeat"
+                neighbors[ tuple(x_big) ] = "big_delta"
 
         x_history = x
         for j in range( 1, len( rolling_history ) + 1 ):
