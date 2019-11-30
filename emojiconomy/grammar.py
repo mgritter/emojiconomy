@@ -18,11 +18,14 @@ types = [
     "plant_proc",
     "plant_prod",
     "food",
-#    "ore",
-#    "ore_proc",
-#    "machine",
-#    "house",
-#    "toy"
+    "ore",
+    "ore_proc",
+    "metal",
+    "metal_part",
+    "machine",
+    "housing",
+    "vehicle",
+    "toy"
 ]
 
 def remove_unused( g ):
@@ -64,7 +67,7 @@ def describe_econ( g ):
                    pretty_print_list( outputs ) )
             
 
-def run_econ( default_maximum = 10, maximums = {} ):
+def run_econ( default_maximum = 10, maximums = {}, verbose=False ):
     # Augment the start grammar with maximum number of goods per type.
     init_graph = econ_grammar.start.copy()
 
@@ -79,14 +82,14 @@ def run_econ( default_maximum = 10, maximums = {} ):
         initialGraph = init_graph,        
         grammar = econ_grammar
     )
-    a.verbose = False
-    a.run( 20 )
+    a.verbose = verbose
+    a.run( 30 )
     remove_unused( a.graph )
     emojify_graph( a.graph )
     return a.graph
         
 if __name__ == "__main__":
-    g = run_econ(3)
+    g = run_econ(3, verbose=True)
     describe_econ( g )
-    drawSvg( g, "econ.svg" )
+    drawSvg( g, "econ.svg", program="dot" )
     
