@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "da6236b473e9c42267181b81284ba274008bdbd69596a434c27e8f363d4ce19e"
+            "sha256": "ba03233194e56283cb6b1017204850610770b8fbe49fb7db48cdd11dbc4dcae0"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -161,7 +161,7 @@
         "soffit": {
             "editable": true,
             "git": "https://github.com/mgritter/soffit",
-            "ref": "d46367af24625722c69dd84569937d6ac3b6feec"
+            "ref": "359e1045fc7169f4e550d1fd3b3fbc3527ae6c0f"
         }
     },
     "develop": {}

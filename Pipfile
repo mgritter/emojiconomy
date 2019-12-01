@@ -7,7 +7,7 @@ url = "https://pypi.org/simple"
 python_version = "3.5"
 
 [packages]
-soffit = {git = "https://github.com/mgritter/soffit", ref = "v0.0.2", editable = true}
+soffit = {git = "https://github.com/mgritter/soffit", ref = "v0.0.3", editable = true}
 matplotlib = "*"
 pygraphviz = "*"
 
