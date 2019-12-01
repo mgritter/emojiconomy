@@ -10,7 +10,8 @@ from emojiconomy.flow import flow_to_consumables
 __location__ = os.path.realpath(
     os.path.join(os.getcwd(), os.path.dirname(__file__)))
 
-econ_fn = os.path.join(__location__, 'econ.soffit.json')
+econ_fn = os.path.join(__location__, 'econ.soffit.2.json')
+#econ_fn = os.path.join(__location__, 'econ.soffit.json')
 econ_grammar = soffit.loadGrammar( econ_fn )
 
 types = [
@@ -25,7 +26,8 @@ types = [
     "machine",
     "housing",
     "vehicle",
-    "toy"
+    "toy",
+    "edible",
 ]
 
 def remove_unused( g ):
@@ -70,6 +72,8 @@ def describe_econ( g ):
 def run_econ( default_maximum = 10, maximums = {}, verbose=False ):
     # Augment the start grammar with maximum number of goods per type.
     init_graph = econ_grammar.start.copy()
+
+    maximums['edible'] = 5
 
     nodeNumber = 0
     for t in types:        

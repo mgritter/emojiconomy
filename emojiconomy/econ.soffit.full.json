@@ -1,0 +1,95 @@
+{
+    "version" : "0.1",
+    "start" : "S[source]; K[sink]",
+    
+    "S[source]; A[allowed_plant]" :
+    "S[source]; P[unused_plant]; S->P",
+
+    "S[source]; A[allowed_ore]" :
+    "S[source]; O[unused_ore]; S->O",
+
+    "P[unused_plant]; A[allowed_plant_proc]" :
+    "P[plant]; PP[plant_proc]; F[process]; P->F; F->PP",
+    
+    "P[unused_plant]; A1[allowed_plant_proc]; A2[allowed_plant_prod]" :
+    "P[plant]; P1[plant_proc]; P2[plant_prod]; F[process]; P->F; F->P1 [eq]; F->P2 [eq]",
+
+    "P[unused_plant]; A1[allowed_plant_prod]; A2[allowed_plant_prod]" :
+    "P[plant]; P1[plant_prod]; P2[plant_prod]; F[process]; P->F; F->P1 [eq]; F->P2 [eq]",
+
+    "P[unused_plant]; K[sink]" :
+    "P[plant]; K[sink]; P->K",
+    
+    "P[plant_proc]; K[sink]" :
+    "P[plant_proc]; K[sink]; P->K",
+
+    "P[plant]; PP[plant_proc]; A[allowed_food]; K[sink]" :
+    "P[plant]; PP[plant_proc]; F[food]; K[sink]; FF[factory]; P->FF; PP->FF; FF->F [min]; F->K",
+
+    "P1[plant_proc]; P2[plant_proc]; A[allowed_food]; K[sink]" :
+    "P1[plant_proc]; P2[plant_proc]; F[food]; K[sink]; FF[factory]; P1->FF; P2->FF; FF->F [min]; F->K",
+
+    "O[unused_ore]; A[allowed_ore_proc]" :
+    "O[ore]; OP[ore_proc]; F[process]; O->F; F->OP",
+    
+    "O[unused_ore]; A[allowed_ore_proc]; A2[allowed_ore_proc]" :
+    "O[ore]; OP1[ore_proc]; OP2[ore_proc]; F[process]; O->F; F->OP1 [eq]; F->OP2 [eq]",
+
+    "O[unused_ore]; A[allowed_metal]" :
+    "O[ore]; M[metal]; F[process]; O->F; F->M",
+
+    "O1[unused_ore]; O2[unused_ore]; A[allowed_metal]" :
+    "O1[ore]; O2[ore]; M[metal]; F[factory]; O1->F; O2->F; F->M [min]",
+
+    "O1[ore]; O2[ore]; A[allowed_metal]" :
+    "O1[ore]; O2[ore]; M[metal]; F[factory]; O1->F; O2->F; F->M [min]",
+    
+    "O1[ore]; O2[ore]; O3[unused_ore]; A[allowed_metal]" :
+    "O1[ore]; O2[ore]; O3[ore]; M[metal]; F[factory]; O1->F; O2->F; O3->F; F->M [min]",
+
+    "O1[ore]; O2[ore]; O3[unused_ore]; A[allowed_metal]" :
+    "O1[ore]; O2[ore]; O3[ore]; M[metal]; F[factory]; O1->F; O2->F; O3->F; F->M [min]",
+
+    "O[unused_ore]; M1[metal]; A[allowed_metal]" :
+    "O[ore]; M1[metal]; M2[metal]; F[factory]; O->F; M1->F; F->M2 [min]",
+
+    "O[ore]; M1[metal]; A[allowed_metal]" :
+    "O[ore]; M1[metal]; M2[metal]; F[factory]; O->F; M1->F; F->M2 [min]",
+
+    "O[ore]; M1[metal]; A[allowed_metal]" :
+    "O[ore]; M1[metal]; M2[metal]; F[factory]; O->F; M1->F; F->M2 [min]",
+
+    "M1[metal]; A[allowed_metal_part]" :
+    "M1[metal]; P[metal_part]; F[process]; M1->F; F->P [=]",
+
+    "M1[metal]; M2[metal]; A[allowed_metal_part]" :
+    "M1[metal]; M2[metal]; P[metal_part]; F[factory]; M1->F; M2->F; F->P [min]",
+
+    "O1[ore]; O2[ore]; A[allowed_metal_part]" :
+    "O1[ore]; O2[ore]; P[metal_part]; F[factory]; O1->F; O2->F; F->P [min]",
+
+    "M1[metal]; P1[plant_prod]; A[allowed_metal_part]" :
+    "M1[metal]; P1[plant_prod]; M2[metal_part]; F[factory]; M1->F; P1->F; F->M2 [min]",
+
+    "M1[metal_part]; P1[plant_prod]; A[allowed_toy]; S[sink]" :
+    "M1[metal_part]; P1[plant_prod]; T[toy]; F[factory]; S[sink]; M1->F; P1->F; F->T [min]; T->S",
+
+    "M1[metal_part]; O1[ore_proc]; A[allowed_toy]; S[sink]" :
+    "M1[metal_part]; O1[ore_proc]; T[toy]; F[factory]; S[sink]; M1->F; O1->F; F->T [min]; T->S",
+
+    "M1[metal_part]; P1[plant_prod]; A[allowed_machine]; S[sink]" :
+    [ "M1[metal_part]; P1[plant_prod]; T[machine]; F[factory]; S[sink]; M1->F; P1->F; F->T [min]; T->S",
+      "M1[metal_part]; P1[plant_prod]; T[machine]; F[factory]; S[sink]; M1->F; P1->F; F->T [min];",
+      "M1[metal_part]; P1[plant_prod]; T1[machine]; T2[machine]; F1[factory]; F2[factory]; S[sink]; M1->F1; P1->F1; F1->T1[eq]; T1->F2; P1->F2; F2->T2 [min]; T2->S"
+    ],
+
+    "M1[metal_part]; M2[metal]; M3[machine]; A[allowed_vehicle]; S[sink]" :
+    "M1[metal_part]; M2[metal]; M3[machine]; V[vehicle]; F[factory]; S[sink]; M1->F; M2->F; M3->F; F->V [min]; V->S",
+
+    "M1[metal_part]; M2[metal]; M3[ore_proc]; A[allowed_housing]; S[sink]" :
+    "M1[metal_part]; M2[metal]; M3[ore_proc]; H[housing]; F[factory]; S[sink]; M1->F; M2->F; M3->F; F->H [min]; H->S",
+
+    "M1[metal_part]; M2[ore_proc]; A[allowed_toy]; S[sink]" :
+    "M1[metal_part]; M2[ore_proc]; T[toy]; F[factory]; S[sink]; M1->F; M2->F; F->T [min]; T->S"
+
+}

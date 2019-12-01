@@ -1,0 +1,66 @@
+{
+    "version" : "0.1",
+    "start" : "S[source]; K[sink]",
+
+    "S[source]; A1[allowed_plant]; AE[allowed_edible]; K[sink]" :
+    "S[source]; P[plant];                              K[sink]; S->P; P->K",
+
+    "S[source]; A1[allowed_plant]; A2[allowed_food]; AE[allowed_edible]; K[sink]" : [
+        "S[source]; P[plant]; F[food]; K[sink]; NEW_PROC_FOOD[process]; NEW_OUTPUT[plant_output_slot]; S->P; P->NEW_PROC_FOOD; NEW_PROC_FOOD->F [eq]; NEW_PROC_FOOD->NEW_OUTPUT [eq]; F->K;",
+        "S[source]; P[plant]; F[food]; K[sink]; NEW_FACT_FOOD[factory]; NEW_INPUT[food_input_slot]; S->P; P->NEW_FACT_FOOD; NEW_INPUT->NEW_FACT_FOOD; NEW_FACT_FOOD->F [min]; F->K;",
+        "S[source]; P[plant]; F[food]; K[sink]; NEW_FACT_FOOD[factory]; NEW_INPUT[food_input_slot]; NEW_INPUT_2[food_input_slot]; S->P; P->NEW_FACT_FOOD; NEW_INPUT->NEW_FACT_FOOD; NEW_INPUT_2->NEW_FACT_FOOD; NEW_FACT_FOOD->F [min]; F->K;"
+    ],
+    
+    "A1[allowed_food]; P[plant]; K[sink]; AE[allowed_edible]" : [
+        "F[food]; P[plant]; K[sink]; NEW_PROC_FOOD[process]; NEW_OUTPUT[plant_output_slot]; P->NEW_PROC_FOOD; NEW_PROC_FOOD->F [eq]; NEW_PROC_FOOD->NEW_OUTPUT [eq]; F->K;",
+        "F[food]; P[plant]; K[sink]; NEW_PROC_FOOD[process]; P->NEW_PROC_FOOD; NEW_PROC_FOOD->F [eq]; F->K;",
+        "F[food]; P[plant]; K[sink]; NEW_FACT_FOOD[factory]; NEW_INPUT[food_input_slot]; P->NEW_FACT_FOOD; NEW_INPUT->NEW_FACT_FOOD; NEW_FACT_FOOD->F [min]; F->K;",
+        "F[food]; P[plant]; K[sink]; NEW_FACT_FOOD[factory]; NEW_INPUT[food_input_slot]; P->NEW_FACT_FOOD; NEW_INPUT->NEW_FACT_FOOD; NEW_FACT_FOOD->F [min]; F->K;",
+        "F[food]; P[plant]; K[sink]; NEW_FACT_FOOD[factory]; NEW_INPUT[food_input_slot]; P->NEW_FACT_FOOD; NEW_INPUT->NEW_FACT_FOOD; NEW_FACT_FOOD->F [min]; F->K;"
+    ],
+
+    "A1[allowed_food]; P1[plant_proc]; P2[plant_proc]; K[sink]; AE[allowed_edible]" : [
+        "F[food]; P1[plant_proc]; P2[plant_proc]; K[sink]; NEW_FACT_FOOD[factory]; P1->NEW_FACT_FOOD; P2->NEW_FACT_FOOD; NEW_FACT_FOOD->F [min]; F->K;"
+    ],
+
+    "A1[allowed_food]; F1[food]; F2[food]; K[sink]; AE[allowed_edible]" : [
+        "F[food]; F1[food]; F2[food]; K[sink]; NEW_FACT_FOOD[factory]; F1->NEW_FACT_FOOD; F2->NEW_FACT_FOOD; NEW_FACT_FOOD->F [min]; F->K;"
+    ],
+
+    "A1[allowed_plant_proc]; FOOD_INPUT[food_input_slot]; PROD_OUTPUT[plant_output_slot]" : [
+        "FOOD_INPUT^PROD_OUTPUT[plant_proc]"
+    ],
+
+    "FOOD_INPUT[food_input_slot]; PROD[plant_proc]; PLANT[plant]" : [
+        "FOOD_INPUT^PROD[plant_proc]; PLANT[plant]",
+        "FOOD_INPUT^PLANT[plant]; PROD[plant_proc]",
+        "PROD[plant_proc]; PLANT[plant]"
+    ],
+
+    "S[source]; A1[allowed_plant_proc]; A2[allowed_plant_proc]; A3[allowed_plant]; FOOD_INPUT1[food_input_slot]; FOOD_INPUT2[food_input_slot]" : [
+        "P1^FOOD_INPUT_1[plant_proc]; P2^FOOD_INPUT_2[plant_proc]; PLANT[plant]; NEW_PROC_FOOD[process]; S->PLANT; PLANT->NEW_FOOD_PROC; NEW_FOOD_PROC->P1 [eq]; NEW_FOOD_PROC->P2 [eq];"
+    ],
+
+    "A1[allowed_plant_proc]; A2[allowed_plant_proc]; PLANT[plant]; FOOD_INPUT1[food_input_slot]; FOOD_INPUT2[food_input_slot]" : [
+        "P1^FOOD_INPUT_1[plant_proc]; P2^FOOD_INPUT_2[plant_proc]; PLANT[plant]; NEW_FOOD_PROC[process]; PLANT->NEW_FOOD_PROC; NEW_FOOD_PROC->P1 [eq]; NEW_FOOD_PROC->P2 [eq];"
+    ],
+
+    "A1[allowed_plant_proc]; PLANT[plant]; FOOD_INPUT1[food_input_slot]" : [
+        "P1^FOOD_INPUT1[plant_proc]; P2[plant_output_slot]; PLANT[plant]; NEW_FOOD_PROC[process]; PLANT->NEW_FOOD_PROC; NEW_FOOD_PROC->P1 [eq]; NEW_FOOD_PROC->P2 [eq];"
+    ],
+
+    "EDIBLE[plant_proc]; K[sink]; A[allowed_edible]" : [
+        "EDIBLE[plant_proc]; K[sink]; EDIBLE->K"
+    ],
+
+    "INEDIBLE[plant_proc]; K[sink]; A[allowed_edible]; A2[allowed_plant_proc]" : [
+        "INEDIBLE[plant_proc]; K[sink]; EDIBLE[plant_proc]; BYPRODUCT[plant_output_slot]; NEW_FOOD_PROC[process]; INEDIBLE->NEW_FOOD_PROC; NEW_FOOD_PROC->EDIBLE [eq]; NEW_FOOD_PROC->BYPRODUCT [eq]; EDIBLE->K;"
+    ],
+    
+    "A[allowed_plant_proc]; PROCESS[process]; PLANT1[plant]; PLANT2[plant]; GOAL[plant_proc]; FACTORY[factory]; GOAL->FACTORY; PLANT1->PROCESS; PROCESS->GOAL [eq]" : [
+        "PROCESS[process]; PLANT1[plant]; PLANT2[plant]; GOAL[plant_proc]; FACTORY[factory]; GOAL->FACTORY; PLANT1->PROCESS; PROCESS->GOAL [eq]; ALT[process]; PLANT2->ALT; ALT->GOAL [eq]; ALT->BYPRODUCT[eq]; BYPRODUCT[plant_proc]"
+    ],
+
+    "OUT_TO_PROD[plant_output_slot]" :
+    "OUT_TO_PROD[plant_prod]"
+}
