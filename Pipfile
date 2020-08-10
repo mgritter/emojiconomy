@@ -3,11 +3,8 @@ verify_ssl = true
 name = "pypi"
 url = "https://pypi.org/simple"
 
-[requires]
-python_version = "3.5"
-
 [packages]
-soffit = {git = "https://github.com/mgritter/soffit", ref = "v0.0.3", editable = true}
+soffit = {git = "https://github.com/mgritter/soffit", ref = "v0.0.6", editable = true}
 matplotlib = "*"
 pygraphviz = "*"
 
