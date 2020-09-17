@@ -33,4 +33,9 @@ When the auction is completed (200 rounds) the final output will be:
   * `planet-trade.svg`: graph showing all trades
   * `galaxy.pickle`: pickled version of the final state
   
+## Talks
 
+I will be presnting a lightning talk on Emojiconomy at Roguelike Celebration 2020.
+  * [Slides w/ notes](roguelike-celebration-slides-and-notes.pdf)
+  * Video (after the event)
+  
