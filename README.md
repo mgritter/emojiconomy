@@ -37,5 +37,5 @@ When the auction is completed (200 rounds) the final output will be:
 
 I will be presnting a lightning talk on Emojiconomy at Roguelike Celebration 2020.
   * [Slides w/ notes](https://github.com/mgritter/emojiconomy/raw/master/roguelike-celebration-slides-and-notes.pdf)
-  * Video (after the event)
+  * [Video](https://www.youtube.com/watch?v=Q_MFTUYnaf0)
   
